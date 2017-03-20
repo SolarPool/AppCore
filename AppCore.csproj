@@ -1,0 +1,92 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard1.5</TargetFramework>
+    <AssemblyName>AppCore</AssemblyName>
+    <PackageId>AppCore</PackageId>
+    <NetStandardImplicitPackageVersion>1.6.1</NetStandardImplicitPackageVersion>
+    <PackageTargetFallback>$(PackageTargetFallback);portable-net45+win8</PackageTargetFallback>
+    <RootNamespace>Ciphernote</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DefineConstants>TRACE;CLIENT</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DefineConstants>TRACE;DEBUG;CLIENT</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="PasswordStrength\Dictionaries\english.lst" />
+    <None Remove="PasswordStrength\Dictionaries\female_names.lst" />
+    <None Remove="PasswordStrength\Dictionaries\male_names.lst" />
+    <None Remove="PasswordStrength\Dictionaries\passwords.lst" />
+    <None Remove="PasswordStrength\Dictionaries\surnames.lst" />
+    <None Remove="PasswordStrength\Dictionaries\us_tv_and_film.lst" />
+    <None Remove="Resources\Intro\a13-cronkite.spx" />
+    <None Remove="Resources\Intro\space.jpg" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Server\DataAccess\Models\SubscriptionType.cs" Link="Services\Dto\ServerSide\SubscriptionType.cs" />
+    <Compile Include="..\..\Server\Services\Dto\AccountDetailsResponse.cs" Link="Services\Dto\ServerSide\AccountDetailsResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\AttachmentInfo.cs" Link="Services\Dto\ServerSide\AttachmentInfo.cs" />
+    <Compile Include="..\..\Server\Services\Dto\DeleteNotesRequest.cs" Link="Services\Dto\ServerSide\DeleteNotesRequest.cs" />
+    <Compile Include="..\..\Server\Services\Dto\DeleteNotesResponse.cs" Link="Services\Dto\ServerSide\DeleteNotesResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\GetNoteResponse.cs" Link="Services\Dto\ServerSide\GetNoteResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\NoteRevision.cs" Link="Services\Dto\ServerSide\NoteRevision.cs" />
+    <Compile Include="..\..\Server\Services\Dto\PagedResultResponse.cs" Link="Services\Dto\ServerSide\PagedResultResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\QueryAttachmentStateRequest.cs" Link="Services\Dto\ServerSide\QueryAttachmentStateRequest.cs" />
+    <Compile Include="..\..\Server\Services\Dto\QueryAttachmentStateResponse.cs" Link="Services\Dto\ServerSide\QueryAttachmentStateResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\QuerySyncStateRequest.cs" Link="Services\Dto\ServerSide\QuerySyncStateRequest.cs" />
+    <Compile Include="..\..\Server\Services\Dto\QuerySyncStateResponse.cs" Link="Services\Dto\ServerSide\QuerySyncStateResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\RegistrationRequest.cs" Link="Services\Dto\ServerSide\RegistrationRequest.cs" />
+    <Compile Include="..\..\Server\Services\Dto\RegistrationResponse.cs" Link="Services\Dto\ServerSide\RegistrationResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\RequestBase.cs" Link="Services\Dto\ServerSide\RequestBase.cs" />
+    <Compile Include="..\..\Server\Services\Dto\ResponseBase.cs" Link="Services\Dto\ServerSide\ResponseBase.cs" />
+    <Compile Include="..\..\Server\Services\Dto\ResponseMessageType.cs" Link="Services\Dto\ServerSide\ResponseMessageType.cs" />
+    <Compile Include="..\..\Server\Services\Dto\ResultResponse.cs" Link="Services\Dto\ServerSide\ResultResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\ServicesErrors.cs" Link="Services\Dto\ServerSide\ServicesErrors.cs" />
+    <Compile Include="..\..\Server\Services\Dto\UpdateNoteRequest.cs" Link="Services\Dto\ServerSide\UpdateNoteRequest.cs" />
+    <Compile Include="..\..\Server\Services\Dto\UpdateNoteResponse.cs" Link="Services\Dto\ServerSide\UpdateNoteResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\UpdateUserRequest.cs" Link="Services\Dto\ServerSide\UpdateUserRequest.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="PasswordStrength\Dictionaries\english.lst" />
+    <EmbeddedResource Include="PasswordStrength\Dictionaries\female_names.lst" />
+    <EmbeddedResource Include="PasswordStrength\Dictionaries\male_names.lst" />
+    <EmbeddedResource Include="PasswordStrength\Dictionaries\passwords.lst" />
+    <EmbeddedResource Include="PasswordStrength\Dictionaries\surnames.lst" />
+    <EmbeddedResource Include="PasswordStrength\Dictionaries\us_tv_and_film.lst" />
+    <EmbeddedResource Include="Resources\Intro\a13-cronkite.spx" />
+    <EmbeddedResource Include="Resources\Intro\space.jpg" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AngleSharp" Version="0.9.9" />
+    <PackageReference Include="Autofac" Version="4.4.0" />
+    <PackageReference Include="AutoMapper" Version="6.0.1" />
+    <PackageReference Include="FluentValidation" Version="6.4.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="9.0.1" />
+    <PackageReference Include="reactiveui" Version="7.2.0" />
+    <PackageReference Include="Splat" Version="2.0.0" />
+    <PackageReference Include="sqlite-net-pcl" Version="1.3.1" />
+    <PackageReference Include="System.Net.Http" Version="4.3.1" />
+    <PackageReference Include="System.Reflection.TypeExtensions" Version="4.3.0" />
+    <PackageReference Include="System.Runtime.Extensions" Version="4.3.0" />
+    <PackageReference Include="System.Threading.Thread" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RtfPipe\RtfPipe.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="CodeContracts">
+      <HintPath>..\..\lib\netstandard1.5\CodeContracts.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>
