@@ -66,9 +66,9 @@ namespace Ciphernote.Services
             bearerTokenExpiration = null;
         }
 
-        private async Task<LoginResponse> RefreshToken()
+        private async Task<AuthResponse> RefreshToken()
         {
-            var payload = new LoginRequest
+            var payload = new AuthRequest
             {
                 Username = cryptoService.Email,
                 AccessToken = cryptoService.AccessToken,
@@ -76,7 +76,7 @@ namespace Ciphernote.Services
 
             var request = RestRequest.Create("/api/token", HttpMethod.Post, payload);
             var json = await client.GetStringAsync(request);
-            var response = JsonConvert.DeserializeObject<LoginResponse>(json);
+            var response = JsonConvert.DeserializeObject<AuthResponse>(json);
             return response;
         }
     }

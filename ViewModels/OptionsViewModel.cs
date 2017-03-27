@@ -3,26 +3,33 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Reactive.Linq;
 using System.Threading.Tasks;
 using Autofac;
 using Ciphernote.Crypto;
 using Ciphernote.DataAccess.Models;
 using Ciphernote.Extensions;
+using Ciphernote.IO;
 using Ciphernote.Logging;
+using Ciphernote.Model;
 using Ciphernote.Net;
 using Ciphernote.Resources;
 using Ciphernote.Services;
+using Ciphernote.UI;
 using FluentValidation;
+using Newtonsoft.Json;
 using ReactiveUI;
 using Splat;
 
 namespace Ciphernote.ViewModels
 {
-    public class OptionsViewModel : ViewModelBase
+    public class OptionsViewModel : PasswordChangeViewModel
     {
         public OptionsViewModel(IComponentContext ctx, ICoreStrings coreStrings, 
-            IAppCoreSettings appSettings, CryptoService cryptoService, 
-            SyncService syncService, AccountService accountService) : base(ctx)
+            IAppCoreSettings appSettings, CryptoService cryptoService,
+            IFileEx fileEx, IPromptFactory promptFactory,
+            SyncService syncService, AccountService accountService) : 
+            base(ctx, coreStrings, appSettings, fileEx, promptFactory, cryptoService, accountService)
         {
             this.coreStrings = coreStrings;
             this.appSettings = appSettings;
@@ -34,7 +41,14 @@ namespace Ciphernote.ViewModels
             AccountKeyString = CryptoService.FormatAccountKey(cryptoService.AccountKey);
 
             UnlockSecurityCommand = ReactiveCommand.Create(ExecuteUnlockSecurity,
-                this.WhenAny(x => x.Password, x => !string.IsNullOrEmpty(x.Value)));
+                this.WhenAny(x => x.UnlockPassword, x => !string.IsNullOrEmpty(x.Value)));
+
+            // update QR-Code on password change
+            var passwordChangeCommandState = ChangePasswordCommand.IsExecuting.Zip(
+                ChangePasswordCommand.IsExecuting.Skip(1), Tuple.Create);
+
+            disposables.Add(passwordChangeCommandState.Where(x=> x.Item1 && !x.Item2)
+                .Subscribe(_=> UpdateQrCode()));
         }
 
         private readonly ICoreStrings coreStrings;
@@ -61,12 +75,20 @@ namespace Ciphernote.ViewModels
 
         public string Email { get; }
 
-        private string password;
+        private string unlockPassword;
 
-        public string Password
+        public string UnlockPassword
         {
-            get { return password; }
-            set { this.RaiseAndSetIfChanged(ref password, value); }
+            get { return unlockPassword; }
+            set { this.RaiseAndSetIfChanged(ref unlockPassword, value); }
+        }
+
+        private string qrCodeData;
+
+        public string QrCodeData
+        {
+            get { return qrCodeData; }
+            set { this.RaiseAndSetIfChanged(ref qrCodeData, value); }
         }
 
         private string accountStatus;
@@ -107,7 +129,10 @@ namespace Ciphernote.ViewModels
 
         private void ExecuteUnlockSecurity()
         {
-            IsSecurityUnlocked = cryptoService.ValidatePassword(Password);
+            IsSecurityUnlocked = cryptoService.ValidatePassword(UnlockPassword);
+
+            if (IsSecurityUnlocked)
+                UpdateQrCode();
         }
 
         #endregion // Account Options
@@ -128,13 +153,13 @@ namespace Ciphernote.ViewModels
 
                 switch (info.SubscriptionType)
                 {
-                    case SubscriptionType.None:
+                    case ActiveSubscriptionType.None:
                         AccountStatus = coreStrings.AccountStatusNone;
                         break;
-                    case SubscriptionType.Trial:
+                    case ActiveSubscriptionType.Trial:
                         AccountStatus = coreStrings.AccountStatusTrial;
                         break;
-                    case SubscriptionType.Subscribed:
+                    case ActiveSubscriptionType.Subscribed:
                         AccountStatus = coreStrings.AccountStatusSubscribed;
                         break;
                 }
@@ -152,6 +177,17 @@ namespace Ciphernote.ViewModels
             {
                 IsLoading = false;
             }
+        }
+
+        private void UpdateQrCode()
+        {
+            var data = new CredentialsQrCode();
+            data.AccountKey = Convert.ToBase64String(cryptoService.AccountKey);
+            data.Email = cryptoService.Email;
+            data.Password = cryptoService.Password;
+
+            var json = JsonConvert.SerializeObject(data);
+            QrCodeData = json;
         }
     }
 }

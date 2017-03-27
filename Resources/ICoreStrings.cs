@@ -23,6 +23,11 @@
         string LoginFailed { get; }
         string NetworkError { get; }
         string RegisterEmailTaken { get; }
+        string NewPasswordEqualToCurrentPasswordError { get; }
+        string PasswordChangeSuccessTitle { get; }
+        string PasswordChangeSuccessMessage { get; }
+        string PasswordChangeErrorTitle { get; }
+        string PasswordChangeErrorMessage { get; }
 
         string PasswordStrengthVeryStrong { get; }
         string PasswordStrengthStrong { get; }

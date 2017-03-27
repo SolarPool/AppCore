@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Reactive.Disposables;
 using ReactiveUI;
 
 namespace Ciphernote.Model
@@ -35,11 +36,15 @@ namespace Ciphernote.Model
 
         public ReactiveList<string> Tags { get; set; } = new ReactiveList<string>();
 
+        private CompositeDisposable disposables = new CompositeDisposable();
+
         #region IDisposable implementation
 
         public virtual void Dispose()
         {
-            // Please override in platform specific entity
+            // Override in platform specific entity
+            disposables?.Dispose();
+            disposables = null;
         }
 
         #endregion

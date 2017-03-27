@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using ReactiveUI;
 
@@ -28,19 +29,17 @@ namespace Ciphernote.Model.Projections
             hasConflicts = this.WhenAny(x => x.ConflictingNoteId, x => x.Value)
                 .Select(x => x.HasValue)
                 .ToProperty(this, x => x.HasConflicts);
+
+            disposables.Add(hasThumbnailUri);
+            disposables.Add(hasTodoProgress);
+            disposables.Add(isTodoComplete);
+            disposables.Add(timestampHuman);
+            disposables.Add(hasConflicts);
         }
 
         public long Id { get; set; }
-        public string BodyMimeType { get; set; }
-        public string[] MediaRefs { get; set; }
 
-        private ReactiveList<string> tags;
-
-        public ReactiveList<string> Tags
-        {
-            get { return tags; }
-            set { this.RaiseAndSetIfChanged(ref tags, value); }
-        }
+        public string[] Tags { get; set; }
 
         private DateTime timestamp;
 
@@ -91,14 +90,6 @@ namespace Ciphernote.Model.Projections
             set { this.RaiseAndSetIfChanged(ref longitude, value); }
         }
 
-        private double? altitude;
-
-        public double? Altitude
-        {
-            get { return altitude; }
-            set { this.RaiseAndSetIfChanged(ref altitude, value); }
-        }
-
         private string thumbnailUri;
 
         public string ThumbnailUri
@@ -131,6 +122,7 @@ namespace Ciphernote.Model.Projections
             set { this.RaiseAndSetIfChanged(ref isSyncPending, value); }
         }
 
+        private CompositeDisposable disposables = new CompositeDisposable();
         private readonly ObservableAsPropertyHelper<bool> hasThumbnailUri;
         private readonly ObservableAsPropertyHelper<bool> hasTodoProgress;
         private readonly ObservableAsPropertyHelper<bool> isTodoComplete;
@@ -147,7 +139,9 @@ namespace Ciphernote.Model.Projections
 
         public virtual void Dispose()
         {
-            // Please override in platform specific entity
+            // Override in platform specific entity
+            disposables?.Dispose();
+            disposables = null;
         }
 
         #endregion

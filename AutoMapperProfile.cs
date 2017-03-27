@@ -22,10 +22,8 @@ namespace Ciphernote.Core
                 .ForMember(dest => dest.Timestamp, opt=> opt.MapFrom(src => DateTimeOffset.FromUnixTimeSeconds(src.Timestamp).UtcDateTime));
 
             CreateMap<Repository.NoteSummary, Model.Projections.NoteSummary>()
-                .ForMember(dest => dest.Tags, opt => opt.MapFrom(src => new ReactiveList<string>(
-                    !string.IsNullOrEmpty(src.Tags) ? src.Tags.Split(Repository.Note.TagSeperator[0]).ToArray() : new string[0])))
-                .ForMember(dest => dest.MediaRefs, opt => opt.MapFrom(src => !string.IsNullOrEmpty(src.MediaRefs) ?
-                    src.MediaRefs.Split(Repository.Note.TagSeperator[0]).ToArray() : new string[0]))
+                .ForMember(dest => dest.Tags, opt => opt.MapFrom(src => 
+                    !string.IsNullOrEmpty(src.Tags) ? src.Tags.Split(Repository.Note.TagSeperator[0]).ToArray() : new string[0]))
                 .ForMember(dest => dest.Timestamp, opt => opt.MapFrom(src => DateTimeOffset.FromUnixTimeSeconds(src.Timestamp).UtcDateTime));
 
             CreateMap<Model.Note, StoredNote>()
@@ -43,8 +41,6 @@ namespace Ciphernote.Core
             CreateMap<Model.Projections.NoteSummary, Repository.NoteSummary>()
                 .ForMember(dest => dest.Tags, opt => opt.MapFrom(src => src.Tags != null ? string.Join(
                     Repository.Note.TagSeperator, src.Tags) : ""))
-                .ForMember(dest => dest.MediaRefs, opt => opt.MapFrom(src => src.MediaRefs != null ? string.Join(
-                    Repository.Note.TagSeperator, src.MediaRefs) : ""))
                 .ForMember(dest => dest.Timestamp, opt => opt.MapFrom(src => ((DateTimeOffset)src.Timestamp).ToUnixTimeSeconds()));
 
             CreateMap<StoredNote, Model.Note>()

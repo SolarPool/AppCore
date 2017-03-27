@@ -40,6 +40,11 @@ namespace Ciphernote.ViewModels
             showCancelButton = this.WhenAny(x => x.IsRecording, x => x.Value)
                 .ToProperty(this, x => x.ShowCancelButton);
 
+            disposables.Add(recordButtonCaption);
+            disposables.Add(pauseButtonCaption);
+            disposables.Add(showPauseButton);
+            disposables.Add(showCancelButton);
+
             RecordCommand = ReactiveCommand.CreateFromTask(ExecuteRecord, 
                 this.WhenAny(x=> x.CanRecord, x=> x.Value));
 

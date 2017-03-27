@@ -28,18 +28,14 @@ namespace Ciphernote.ViewModels
         public NoteImportViewModel(IComponentContext ctx, 
             ICoreStrings coreStrings, 
             IAppCoreSettings appSettings, 
-            CryptoService cryptoService,
             MainViewModel mainViewModel,
             IEnumerable<INoteImporter> noteImporters,
-            IEnumerable<IDomImporter> domImporters,
             IPromptFactory promptFactory) : base(ctx)
         {
             this.coreStrings = coreStrings;
             this.appSettings = appSettings;
-            this.cryptoService = cryptoService;
             this.mainViewModel = mainViewModel;
             this.noteImporters = noteImporters;
-            this.domImporters = domImporters;
             this.promptFactory = promptFactory;
 
             disposables.Add(cts);
@@ -56,8 +52,12 @@ namespace Ciphernote.ViewModels
                 })
                 .ToProperty(this, x => x.StepInfo);
 
+            disposables.Add(stepInfo);
+
             isFileSelected = this.WhenAny(x => x.SelectedFile, x => !string.IsNullOrEmpty(x.Value))
                 .ToProperty(this, x => x.IsFileSelected);
+
+            disposables.Add(isFileSelected);
 
             SetImporterCmd = ReactiveCommand.CreateFromTask<string>(ExecuteSetImporter);
 
@@ -79,9 +79,7 @@ namespace Ciphernote.ViewModels
         private readonly ICoreStrings coreStrings;
         private readonly IAppCoreSettings appSettings;
         private readonly IEnumerable<INoteImporter> noteImporters;
-        private readonly IEnumerable<IDomImporter> domImporters;
         private readonly IPromptFactory promptFactory;
-        private readonly CryptoService cryptoService;
         private readonly MainViewModel mainViewModel;
         private int totalNoteCount;
         private int processedNoteCount;

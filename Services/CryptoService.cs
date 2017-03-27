@@ -89,6 +89,84 @@ namespace Ciphernote.Services
             }
         }
 
+        public interface IPasswordChangeTransaction
+        {
+            Task<Tuple<byte[], string>> PrepareAsync();
+            Task CommitAsync();
+            Task RollbackAsync();
+        }
+
+        class PasswordChangeTransaction : IPasswordChangeTransaction, IEnableLogger
+        {
+            public PasswordChangeTransaction(CryptoService cryptoService, string oldPassword, string newPassword)
+            {
+                this.cryptoService = cryptoService;
+                this.oldPassword = oldPassword;
+                this.newPassword = newPassword;
+            }
+
+            private readonly CryptoService cryptoService;
+            private readonly string oldPassword;
+            private readonly string newPassword;
+
+            #region IPasswordChangeTransaction
+
+            public async Task<Tuple<byte[], string>> PrepareAsync()
+            {
+                this.Log().Info(()=> $"{nameof(PrepareAsync)}: Preparing for password change");
+
+                // update intermediate keys (credentialsKey, accountKeyEncryptionKey, masterKeyEncryptionKey and accessToken)
+                await cryptoService.SetCredentialsAsync(cryptoService.Email, newPassword);
+                cryptoService.SetAccountKey(cryptoService.accountKey);
+
+                // keep current access token
+                var savedAccessToken = cryptoService.AccessToken;
+
+                // and export it 
+                var encryptedMasterKey = await cryptoService.ExportEncryptedMasterKey();
+
+                // switch back to current set of keys for server authentication
+                await cryptoService.SetCredentialsAsync(cryptoService.Email, oldPassword);
+                cryptoService.SetAccountKey(cryptoService.accountKey);
+
+                this.Log().Info(() => $"{nameof(PrepareAsync)}: Password change prepared");
+                return Tuple.Create(encryptedMasterKey, savedAccessToken);
+            }
+
+            public async Task CommitAsync()
+            {
+                this.Log().Info(() => $"{nameof(PrepareAsync)}: Committing password change");
+
+                // update intermediate keys (credentialsKey, accountKeyEncryptionKey, masterKeyEncryptionKey and accessToken)
+                await cryptoService.SetCredentialsAsync(cryptoService.Email, newPassword);
+                cryptoService.SetAccountKey(cryptoService.accountKey);
+
+                // save keys
+                await cryptoService.SaveAccountKeyAsync();
+                await cryptoService.SaveMasterKeyAsync();
+
+                this.Log().Info(() => $"{nameof(PrepareAsync)}: Password change committed");
+            }
+
+            public async Task RollbackAsync()
+            {
+                this.Log().Info(() => $"{nameof(PrepareAsync)}: Rolling-back password change");
+
+                // update intermediate keys (credentialsKey, accountKeyEncryptionKey, masterKeyEncryptionKey and accessToken)
+                await cryptoService.SetCredentialsAsync(cryptoService.Email, oldPassword);
+                cryptoService.SetAccountKey(cryptoService.accountKey);
+
+                // save keys
+                await cryptoService.SaveAccountKeyAsync();
+                await cryptoService.SaveMasterKeyAsync();
+
+                this.Log().Info(() => $"{nameof(PrepareAsync)}: Password change rolled-back");
+            }
+
+            #endregion // IPasswordChangeTransaction
+        }
+
+
         #region API Surface
 
         public string Email => email;
@@ -97,6 +175,7 @@ namespace Ciphernote.Services
         public string AccessToken => accessToken;
 
         public byte[] AccountKey => accountKey;
+        public string Password => password;
         public byte[] DbEncryptionKey { get; private set; }
 
         /// <summary>
@@ -319,6 +398,12 @@ namespace Ciphernote.Services
                     return destination.ToArray();
                 }
             }
+        }
+
+        public IPasswordChangeTransaction CreatePasswordChangeTransaction(string newPassword)
+        {
+            var tx = new PasswordChangeTransaction(this, password, newPassword);
+            return tx;
         }
 
         public async Task EncryptAsync(Stream source, Stream destination, byte[] key)

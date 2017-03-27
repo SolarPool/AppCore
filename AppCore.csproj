@@ -29,14 +29,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\Server\DataAccess\Models\SubscriptionType.cs" Link="Services\Dto\ServerSide\SubscriptionType.cs" />
+    <Compile Include="..\..\Server\DataAccess\Models\ActiveSubscriptionType.cs" Link="Services\Dto\ServerSide\ActiveSubscriptionType.cs" />
     <Compile Include="..\..\Server\Services\Dto\AccountDetailsResponse.cs" Link="Services\Dto\ServerSide\AccountDetailsResponse.cs" />
     <Compile Include="..\..\Server\Services\Dto\AttachmentInfo.cs" Link="Services\Dto\ServerSide\AttachmentInfo.cs" />
+    <Compile Include="..\..\Server\Services\Dto\AuthRequest.cs" Link="Services\Dto\ServerSide\AuthRequest.cs" />
+    <Compile Include="..\..\Server\Services\Dto\AuthResponse.cs" Link="Services\Dto\ServerSide\AuthResponse.cs" />
     <Compile Include="..\..\Server\Services\Dto\DeleteNotesRequest.cs" Link="Services\Dto\ServerSide\DeleteNotesRequest.cs" />
     <Compile Include="..\..\Server\Services\Dto\DeleteNotesResponse.cs" Link="Services\Dto\ServerSide\DeleteNotesResponse.cs" />
     <Compile Include="..\..\Server\Services\Dto\GetNoteResponse.cs" Link="Services\Dto\ServerSide\GetNoteResponse.cs" />
     <Compile Include="..\..\Server\Services\Dto\NoteRevision.cs" Link="Services\Dto\ServerSide\NoteRevision.cs" />
     <Compile Include="..\..\Server\Services\Dto\PagedResultResponse.cs" Link="Services\Dto\ServerSide\PagedResultResponse.cs" />
+    <Compile Include="..\..\Server\Services\Dto\PasswordChangeRequest.cs" Link="Services\Dto\ServerSide\PasswordChangeRequest.cs" />
     <Compile Include="..\..\Server\Services\Dto\QueryAttachmentStateRequest.cs" Link="Services\Dto\ServerSide\QueryAttachmentStateRequest.cs" />
     <Compile Include="..\..\Server\Services\Dto\QueryAttachmentStateResponse.cs" Link="Services\Dto\ServerSide\QueryAttachmentStateResponse.cs" />
     <Compile Include="..\..\Server\Services\Dto\QuerySyncStateRequest.cs" Link="Services\Dto\ServerSide\QuerySyncStateRequest.cs" />

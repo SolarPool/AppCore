@@ -78,7 +78,7 @@ namespace Ciphernote.ViewModels
             
             isNoteListEmpty = Notes.IsEmptyChanged.ToProperty(this, x => x.IsNoteListEmpty);
 
-            isNoteListFiltered = this.WhenAny(x => x.SearchTerm, x => !string.IsNullOrEmpty(x.Value))
+            isNoteListFiltered = this.WhenAny(x => x.SearchTerm, x => !string.IsNullOrEmpty(x.Value?.Trim()))
                 .ToProperty(this, x => x.IsNoteListFiltered);
 
             NoteUpdated = noteUpdatedSubject.AsObservable();
@@ -107,6 +107,7 @@ namespace Ciphernote.ViewModels
         private readonly Repository repo;
         private readonly IAppCoreSettings appSettings;
         private readonly Subject<Note> noteUpdatedSubject = new Subject<Note>();
+        private readonly Subject<string> searchTermPreviewSubject = new Subject<string>();
         private readonly SyncService syncService;
         private readonly CryptoService cryptoService;
         private readonly IFileEx filex;
@@ -118,12 +119,15 @@ namespace Ciphernote.ViewModels
         private readonly ObservableAsPropertyHelper<bool> isNoteListEmpty;
         private readonly ObservableAsPropertyHelper<bool> isNoteListFiltered;
         private readonly IReactiveList<NoteSummary> notesSource = new ReactiveList<NoteSummary>();
+
         private IReactiveList<NoteSummary> notes;
         private NoteSummary selectedNote;
         private string searchTerm;
+        private NotesViewMode viewMode;
         private int supressNoteUpdatedNotificationCount = 0;
+        private bool isLoadingPage;
         private HashSet<Note> queuedNoteUpdatedNotifications;
-        
+
         public const string SearchQueryProcessingInstructionPrefix = "@";
 
         public IReactiveList<string> Tags { get; } = new ReactiveList<string>();
@@ -133,6 +137,8 @@ namespace Ciphernote.ViewModels
         public ReactiveCommand NewNoteCommand { get; private set; }
         public ReactiveCommand DeleteNotesCommand { get; private set; }
         public ReactiveCommand SyncCommand { get; private set; }
+
+        public int NotesPageSize { get; set; } = 30;
 
         public IReactiveList<NoteSummary> Notes
         {
@@ -154,8 +160,6 @@ namespace Ciphernote.ViewModels
 
         public bool IsNoteListEmpty => isNoteListEmpty.Value;
         public bool IsNoteListFiltered => isNoteListFiltered.Value;
-
-        public NotesViewMode viewMode;
 
         public NotesViewMode ViewMode
         {
@@ -208,40 +212,117 @@ namespace Ciphernote.ViewModels
                     .ObserveOn(RxApp.MainThreadScheduler)
                     .Subscribe(x => RefreshTimestamps()));
 
-                // wire search
-                disposables.Add(this.WhenAny(x => x.SearchTerm, x => x.Value)
-                    .Where(x => x != null)
-                    .Select(x => x.ToString().Trim())
+                var searchTermValue = Observable.Merge(
+                        this.WhenAny(x => x.SearchTerm, x => x.Value)
+                            .Throttle(TimeSpan.FromMilliseconds(400)),
+                        searchTermPreviewSubject)
+                    .Select(x => x?.ToString()?.Trim())
                     .DistinctUntilChanged()
-                    .Sample(TimeSpan.FromMilliseconds(125))
-                    .ObserveOn(RxApp.MainThreadScheduler)
-                    .Subscribe(async x =>
-                    {
-                        if (string.IsNullOrEmpty(x))
-                            await LoadNotesAsync();
-                        else if (x.Length >= 2)
-                            await ExecuteSearch(x);
-                    }));
+                    .Do(x=> Debug.WriteLine(x))
+                    .Publish()
+                    .RefCount();
 
-                // wire tag list
-                notesSource.ChangeTrackingEnabled = true;
+                var searchTermValidity = searchTermValue
+                    .Select(x=> !string.IsNullOrEmpty(x) && x.Length >= 2)
+                    .DistinctUntilChanged()
+                    .Publish()
+                    .RefCount();
 
-                disposables.Add(Observable.Merge(
-                        notesSource.Changed.Select(_ => Unit.Default),
-                        notesSource.ItemChanged.Select(_ => Unit.Default))
-                    .Throttle(TimeSpan.FromMilliseconds(200))
-                    .Select(_ => notesSource.SelectMany(x => x.Tags).Distinct().OrderBy(x => x))
-                    .ObserveOn(RxApp.MainThreadScheduler)
-                    .Subscribe(distinctTags =>
+                var validSearchTermValues = Observable.CombineLatest(
+                        searchTermValidity, 
+                        searchTermValue, (valid, value)=> new { Valid = valid, Value = value })
+                    .Where(x=> x.Valid)
+                    .Select(x=> x.Value)
+                    .DistinctUntilChanged()
+                    .Publish()
+                    .RefCount();
+
+                var reloadTags = Observable.CombineLatest(
+                    searchTermValidity.StartWith(false),
+                    NoteUpdated
+                        .Sample(TimeSpan.FromMilliseconds(1000))
+                        .Select(_ => Unit.Default)
+                        .StartWith(Unit.Default),
+                    (stv, _)=> !stv)
+                    .Where(x=> x);
+
+                var reSearchTags = Observable.CombineLatest(
+                    validSearchTermValues,
+                    NoteUpdated
+                        .Sample(TimeSpan.FromMilliseconds(1000))
+                        .Select(_ => Unit.Default)
+                        .StartWith(Unit.Default),
+                    (vstv, _) => vstv);
+
+                // wire search
+                disposables.Add(validSearchTermValues
+                    .Select(x => Observable.FromAsync(async () =>
                     {
-                        using (Tags.SuppressChangeNotifications())
+                        try
                         {
-                            Tags.Clear();
-                            Tags.AddRange(distinctTags);
+                            await SearchNotesAsync(x);
                         }
-                    }));
 
-                if(!appSettings.IntroNoteCreated)
+                        catch (Exception ex)
+                        {
+                            this.Log().Error(() => "Note search subscription", ex);
+                        }
+                    }))
+                    .Concat()
+                    .Subscribe());
+
+                disposables.Add(searchTermValidity.Where(x=> !x)
+                    .Select(x => Observable.FromAsync(async () =>
+                    {
+                        try
+                        {
+                            await LoadNotesAsync();
+                        }
+
+                        catch (Exception ex)
+                        {
+                            this.Log().Error(() => "Note loading subscription", ex);
+                        }
+                    }))
+                    .Concat()
+                    .Subscribe());
+
+                // wire tag search
+                disposables.Add(reSearchTags
+                    .Sample(TimeSpan.FromMilliseconds(200))
+                    .Select(x => Observable.FromAsync(async () =>
+                    {
+                        try
+                        {
+                            await SearchTagsAsync(x);
+                        }
+
+                        catch (Exception ex)
+                        {
+                            this.Log().Error(() => "Tag search subscription", ex);
+                        }
+                    }))
+                    .Concat()
+                    .Subscribe());
+
+                disposables.Add(reloadTags
+                    .Sample(TimeSpan.FromMilliseconds(200))
+                    .Select(x => Observable.FromAsync(async () =>
+                    {
+                        try
+                        {
+                            await LoadTagsAsync();
+                        }
+
+                        catch (Exception ex)
+                        {
+                            this.Log().Error(() => "Tag loading subscription", ex);
+                        }
+                    }))
+                    .Concat()
+                    .Subscribe());
+
+                if (!appSettings.IntroNoteCreated)
                 {
                     await CreateIntroNoteAsync();
                     appSettings.IntroNoteCreated = true;
@@ -260,6 +341,143 @@ namespace Ciphernote.ViewModels
                 this.Log().Error(() => nameof(InitAsync), ex);
                 throw;
             }
+        }
+
+        public async Task LoadNotesAsync()
+        {
+            // load initial page
+            var result = await repo.GetNotesAsync(0, NotesPageSize);
+            this.Log().Info(() => $"Loaded {result.Length} notes");
+
+            dispatcher.Invoke(() =>
+            {
+                ReplaceNotes(result);
+            });
+        }
+
+        private async Task SearchNotesAsync(string currentSearchTerm)
+        {
+            NoteSummary[] result;
+
+            // load initial page
+            bool deleted;
+            currentSearchTerm = HandleSearchProcessingInstructions(currentSearchTerm, out deleted);
+
+            // WARNING: do not remove, currentSearchTerm can become empty after being run through HandleSearchProcessingInstructions
+            if (!string.IsNullOrEmpty(currentSearchTerm))
+                result = await repo.SearchNotesAsync(0, NotesPageSize, currentSearchTerm, deleted);
+            else
+                result = await repo.GetNotesAsync(0, NotesPageSize, deleted);
+
+            dispatcher.Invoke(() =>
+            {
+                ReplaceNotes(result);
+            });
+        }
+
+        public async Task LoadNextPageAsync()
+        {
+            if (isLoadingPage)
+                return;
+
+            try
+            {
+                isLoadingPage = true;
+
+                // WARNING: this method is assumed to be called from the main thread
+                NoteSummary[] result;
+
+                if (!IsNoteListFiltered)
+                {
+                    result = await repo.GetNotesAsync(notesSource.Count, NotesPageSize);
+                }
+
+                else
+                {
+                    bool deleted;
+                    var currentSearchTerm = HandleSearchProcessingInstructions(SearchTerm, out deleted);
+
+                    // WARNING: do not remove, currentSearchTerm can become empty after being run through HandleSearchProcessingInstructions
+                    if (!string.IsNullOrEmpty(currentSearchTerm))
+                        result = await repo.SearchNotesAsync(notesSource.Count, NotesPageSize, currentSearchTerm, deleted);
+                    else
+                        result = await repo.GetNotesAsync(notesSource.Count, NotesPageSize, deleted);
+                }
+
+                if (result.Length > 0)
+                    AppendNotes(result);
+            }
+
+            catch (Exception ex)
+            {
+                this.Log().Error(() => nameof(LoadNextPageAsync), ex);
+            }
+
+            finally
+            {
+                isLoadingPage = false;
+            }
+        }
+
+        private async Task SearchTagsAsync(string currentSearchTerm)
+        {
+            bool searchInDeletedNotes;
+            currentSearchTerm = HandleSearchProcessingInstructions(currentSearchTerm, out searchInDeletedNotes);
+
+            var result = await repo.SearchTagsAsync(currentSearchTerm, searchInDeletedNotes);
+
+            dispatcher.Invoke(() =>
+            {
+                ReplaceTags(result);
+            });
+        }
+
+        private string HandleSearchProcessingInstructions(string query, out bool searchInDeletedNotes)
+        {
+            searchInDeletedNotes = EvaluateSearchProcessingInstruction(
+                coreStrings.DeletedNotesSearchProcessingInstructionName, ref query);
+
+            return query;
+        }
+
+        private bool EvaluateSearchProcessingInstruction(string instruction, ref string query)
+        {
+            var regex = new Regex(SearchQueryProcessingInstructionPrefix + instruction, RegexOptions.IgnoreCase);
+
+            var enabled = false;
+
+            query = regex.Replace(query, m =>
+            {
+                enabled = true;
+                return string.Empty;
+            }).Trim();
+
+            return enabled;
+        }
+
+        private void ExecuteResetSearch()
+        {
+            searchTermPreviewSubject.OnNext(null);
+            SearchTerm = "";
+        }
+
+        /// <summary>
+        /// Fast-track to search updates - bypassing throtteling
+        /// </summary>
+        public void PreviewSearchTerm(string value)
+        {
+            searchTermPreviewSubject.OnNext(value);
+        }
+
+        public async Task LoadTagsAsync()
+        {
+            var result = await repo.GetTagsAsync();
+            this.Log().Info(() => $"Loaded {result.Length} tags");
+
+            dispatcher.Invoke(() =>
+            {
+                ReplaceTags(result);
+            });
         }
 
         public async Task<Note> LoadNoteAsync(long id)
@@ -286,7 +504,11 @@ namespace Ciphernote.ViewModels
             var textContent = await PostProcessChangedNoteAsync(note, body);
 
             // update sync information
-            note.SyncHmac = await syncService.ComputeSyncHmac(note);
+            var hmac = await syncService.ComputeSyncHmac(note);
+            if (hmac != note.SyncHmac)
+                note.SyncHmac = hmac;
+            else
+                note.IsSyncPending = false;
 
             // store it
             await repo.InsertOrUpdateNoteAsync(note, textContent);
@@ -328,19 +550,11 @@ namespace Ciphernote.ViewModels
             summary.Title = note.Title;
             summary.Excerpt = note.Excerpt;
             summary.ThumbnailUri = note.ThumbnailUri;
-            summary.BodyMimeType = note.BodyMimeType;
-            summary.MediaRefs = note.MediaRefs;
             summary.Timestamp = note.Timestamp;
             summary.TodoProgress = note.TodoProgress;
             summary.ConflictingNoteId = note.ConflictingNoteId;
             summary.IsSyncPending = note.IsSyncPending;
-
-            if (summary.Tags != null)
-                summary.Tags.Clear();
-            else
-                summary.Tags = new ReactiveList<string>();
-
-            summary.Tags.AddRange(note.Tags);
+            summary.Tags = note.Tags.ToArray();
         }
 
         public IDisposable SuppressNoteUpdatedNotifications()
@@ -383,14 +597,6 @@ namespace Ciphernote.ViewModels
                 textContent.Remove(0, note.Title.Length);
 
             note.Excerpt = textContent.ToString().TrimStart().TruncateAtWord(160);
-        }
-
-        public async Task LoadNotesAsync()
-        {
-            var result = await repo.GetNotesAsync();
-            ReplaceNotes(result);
-
-            this.Log().Info(() => $"Loaded {result.Length} notes");
         }
 
         public async Task<NoteSummary> LoadSummary(long? noteId)
@@ -528,60 +734,38 @@ namespace Ciphernote.ViewModels
             return stream;
         }
 
-        private async Task ExecuteSearch(string currentSearchTerm)
-        {
-            NoteSummary[] notes;
-
-            bool searchInDeletedNotes;
-            currentSearchTerm = HandleSearchProcessingInstructions(currentSearchTerm, out searchInDeletedNotes);
-
-            if (!string.IsNullOrEmpty(currentSearchTerm))
-                notes = await repo.SearchNotesAsync(currentSearchTerm, searchInDeletedNotes);
-            else
-                notes = await repo.GetNotesAsync(searchInDeletedNotes);
-
-            ReplaceNotes(notes);
-        }
-
-        private string HandleSearchProcessingInstructions(string query, out bool searchInDeletedNotes)
-        {
-            searchInDeletedNotes = EvaluateSearchProcessingInstruction(
-                coreStrings.DeletedNotesSearchProcessingInstructionName, ref query);
-
-            return query;
-        }
-
-        private bool EvaluateSearchProcessingInstruction(string instruction, ref string query)
-        {
-            var regex = new Regex(SearchQueryProcessingInstructionPrefix + instruction, RegexOptions.IgnoreCase);
-
-            var enabled = false;
-
-            query = regex.Replace(query, m =>
-            {
-                enabled = true;
-                return string.Empty;
-            }).Trim();
-
-            return enabled;
-        }
-
-        private void ExecuteResetSearch()
-        {
-            SearchTerm = "";
-        }
-
         private void ReplaceNotes(IEnumerable<NoteSummary> notes)
         {
             Contract.RequiresNonNull(notes, nameof(notes));
 
             using (notesSource.SuppressChangeNotifications())
             {
+                var items = notesSource.ToArray();
                 notesSource.Clear();
+
+                foreach (var item in items)
+                    item.Dispose();
+
                 notesSource.AddRange(notes);
             }
 
             RestoreSelection();
+        }
+
+        private void AppendNotes(IEnumerable<NoteSummary> notes)
+        {
+            Contract.RequiresNonNull(notes, nameof(notes));
+
+            notesSource.AddRange(notes);
+        }
+
+        private void ReplaceTags(string[] tags)
+        {
+            using (Tags.SuppressChangeNotifications())
+            {
+                Tags.Clear();
+                Tags.AddRange(tags);
+            }
         }
 
         public void RestoreSelection()
@@ -938,12 +1122,18 @@ namespace Ciphernote.ViewModels
                 {
                     var tcs = new TaskCompletionSource<Unit>();
 
-                    dispatcher.BeginInvoke(() =>
+                    dispatcher.Invoke(() =>
                     {
                         TaskUtil.RunWithCompletionSource(tcs, async () =>
                         {
                             await SaveNoteAsync(note, null, false);
-                            await LoadSummary(note.Id);
+
+                            // do not load summaries for deleted notes unless we're inside trash
+                            if (!note.IsDeleted || (!string.IsNullOrEmpty(SearchTerm) && SearchTerm.ToLower().Contains(
+                                SearchQueryProcessingInstructionPrefix + coreStrings.DeletedNotesSearchProcessingInstructionName)))
+                            {
+                                await LoadSummary(note.Id);
+                            }
                         });
                     });
 
@@ -962,7 +1152,7 @@ namespace Ciphernote.ViewModels
                 {
                     var tcs = new TaskCompletionSource<Unit>();
 
-                    dispatcher.BeginInvoke(() =>
+                    dispatcher.Invoke(() =>
                     {
                         TaskUtil.RunWithCompletionSource(tcs, async () =>
                         {

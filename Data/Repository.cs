@@ -42,13 +42,13 @@ namespace Ciphernote.Data
         {
             Contract.RequiresNonNull(con, nameof(con));
 
-            if (!ExistsTable(con, typeof(Note)))
+            if (!TableExists<Note>(con))
                 con.CreateTable<Note>();
 
-            if (!ExistsTable(con, typeof(DeletionQueueEntry)))
+            if (!TableExists<DeletionQueueEntry>(con))
                 con.CreateTable<DeletionQueueEntry>();
 
-            if (!ExistsTable(con, typeof(NoteFts)))
+            if (!TableExists<NoteFts>(con))
                 con.CreateTable<NoteFts>(CreateFlags.FullTextSearch4);
         }
 
@@ -58,22 +58,57 @@ namespace Ciphernote.Data
 
             if (schemaVersion != CurrentSchemaVersion)
             {
+                switch (schemaVersion)
+                {
+                    case 0:
+                    case 1:
+                        SafeCreateIndex<Note>(con, "NotePagingOrder_Conflict_Timestamp", false,
+                            nameof(Note.IsDeleted), 
+                            nameof(Note.ConflictingNoteId), 
+                            nameof(Note.Timestamp));
+                        break;
+                }
+
                 //con.Execute("ALTER TABLE notes ADD revision INT NOT NULL DEFAULT 1");
 
                 con.Execute($"PRAGMA user_version = {CurrentSchemaVersion}");
             }
         }
 
-        private bool ExistsTable(SQLiteConnection con, Type type)
+        private bool TableExists<TTable>(SQLiteConnection con)
         {
             Contract.RequiresNonNull(con, nameof(con));
-            Contract.RequiresNonNull(type, nameof(type));
 
-            var attr = type.GetTypeInfo().GetCustomAttribute<TableAttribute>();
-            var tableName = attr.Name;
+            var tableName = GetTableName<TTable>();
 
             var result = con.ExecuteScalar<int>("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?;", tableName);
             return result > 0;
+        }
+
+        private static void SafeCreateIndex<TTable>(SQLiteConnection con, string indexName, bool unique, params string[] columnNames)
+        {
+            Contract.RequiresNonNull(con, nameof(con));
+            Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(indexName), $"{nameof(indexName)} must not be empty");
+            Contract.RequiresNonNull(columnNames, nameof(columnNames));
+            Contract.Requires<ArgumentException>(columnNames.Length > 0, $"{nameof(columnNames)} must not be empty");
+
+            try
+            {
+                var tableName = GetTableName<TTable>();
+                con.CreateIndex(indexName, tableName, columnNames, unique);
+            }
+
+            catch (Exception)
+            {
+                // ignored
+            }
+        }
+
+        private static string GetTableName<T>()
+        {
+            var attr = typeof(T).GetTypeInfo().GetCustomAttribute<TableAttribute>();
+            var tableName = attr.Name;
+            return tableName;
         }
 
         private const int CurrentSchemaVersion = 1;
@@ -101,7 +136,6 @@ namespace Ciphernote.Data
             [Indexed]
             public string Uid { get; set; }
 
-            [Indexed]
             public bool IsDeleted { get; set; }
 
             [Indexed]
@@ -114,6 +148,7 @@ namespace Ciphernote.Data
             public string BodyMimeType { get; set; }
             public string MediaRefs { get; set; }    // semicolon separated list of mediaRefs
 
+            [Indexed]
             [Collation("NOCASE")]
             public string Tags { get; set; }
 
@@ -123,8 +158,6 @@ namespace Ciphernote.Data
             public double? Longitude { get; set; }
             public double? Altitude { get; set; }
             public double? TodoProgress { get; set; }
-
-            [Indexed]
             public long Timestamp { get; set; }
 
             // Synching
@@ -148,16 +181,20 @@ namespace Ciphernote.Data
             public string Title { get; set; }
             public string Excerpt { get; set; }
             public string ThumbnailUri { get; set; }
-            public string BodyMimeType { get; set; }
-            public string MediaRefs { get; set; }    // semicolon separated list of mediaRefs
             public string Tags { get; set; }
             public bool HasLocation { get; set; }
             public double? Latitude { get; set; }
             public double? Longitude { get; set; }
-            public double? Altitude { get; set; }
             public double? TodoProgress { get; set; }
             public long? ConflictingNoteId { get; set; }
             public long Timestamp { get; set; }
+        }
+
+        // Projection over "notes" table
+        [Table("notes")]
+        internal class NoteTags
+        {
+            public string Tags { get; set; }
         }
 
         [Table("note_fts")]
@@ -374,108 +411,174 @@ namespace Ciphernote.Data
             return tcs.Task;
         }
 
-        private Model.Projections.NoteSummary[] SearchNotesFts(SQLiteConnection con, string searchTerm, bool searchInDeleted)
+        private string[] GetTags(SQLiteConnection con, string whereClause, params object[] parameters)
+        {
+            Contract.RequiresNonNull(con, nameof(con));
+
+            var query = $"SELECT DISTINCT tags FROM notes  ";
+            if (!string.IsNullOrEmpty(whereClause))
+                query += whereClause;
+
+            var tags = con.Query<NoteTags>(query, parameters)
+                .ToList()
+                .SelectMany(x=> x.Tags.Split(Note.TagSeperator[0]).ToArray())
+                .Where(x=> x != string.Empty)
+                .Distinct()
+                .OrderBy(x=> x)
+                .ToArray();
+
+            return tags;
+        }
+
+        private const string FtsSearchQuery = 
+            "SELECT n.* FROM note_fts INNER JOIN notes n ON docid = n.id " +
+            "WHERE n.isdeleted = ? AND content MATCH ?";
+
+        private List<NoteSummary> SearchNotesFts(SQLiteConnection con, 
+            int offset, int limit, string searchTerm, bool deleted)
         {
             Contract.RequiresNonNull(con, nameof(con));
             Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(searchTerm), $"{nameof(searchTerm)} must not be empty");
 
-            var query = "SELECT n.* FROM note_fts INNER JOIN notes n ON docid = n.id " +
-                        "WHERE n.isdeleted = ? AND content MATCH ?;";
+            var query = FtsSearchQuery;
 
-            var notes = con.Query<NoteSummary>(query, searchInDeleted, searchTerm)
-                .ToList()
-                .Select(mapper.Map<Model.Projections.NoteSummary>)
-                .ToArray();
+            query += $" ORDER BY conflictingnoteid DESC, timestamp DESC ";
+            query += $" LIMIT ? OFFSET ?";
+            
+            var notes = con.Query<NoteSummary>(query, deleted, searchTerm, limit, offset)
+                .ToList();
 
             return notes;
         }
 
-        private Model.Projections.NoteSummary[] SearchNotesSubstring(SQLiteConnection con, string searchTerm, bool searchInDeleted)
+        private string[] SearchNoteTagsFts(SQLiteConnection con, string searchTerm, bool deleted)
         {
             Contract.RequiresNonNull(con, nameof(con));
             Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(searchTerm), $"{nameof(searchTerm)} must not be empty");
 
-            // build where clause
-            var query = $"SELECT n.* FROM note_fts INNER JOIN notes n ON docid = n.id " +
-                        $"WHERE n.isdeleted = ? AND content LIKE '%{searchTerm}%'";
+            var query = FtsSearchQuery;
 
-            var notes = con.Query<NoteSummary>(query, searchInDeleted)
-                .ToList()
-                .Select(mapper.Map<Model.Projections.NoteSummary>)
-                .ToArray();
+            return GetTags(con, $"WHERE id IN (SELECT id FROM ({query}))", deleted, searchTerm);
+        }
+
+        private static readonly Func<string, string> BuildSubstringSearchQuery = (searchTerm)=>
+            $"SELECT n.* FROM note_fts INNER JOIN notes n ON docid = n.id " +
+            $"WHERE n.isdeleted = ? AND content LIKE '%{searchTerm}%'";
+
+        private List<NoteSummary> SearchNotesSubstring(SQLiteConnection con, 
+            int offset, int limit, string searchTerm, bool deleted)
+        {
+            Contract.RequiresNonNull(con, nameof(con));
+            Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(searchTerm), $"{nameof(searchTerm)} must not be empty");
+
+            var query = BuildSubstringSearchQuery(searchTerm);
+
+            query += $" ORDER BY conflictingnoteid DESC, timestamp DESC ";
+            query += $" LIMIT ? OFFSET ?";
+
+            var notes = con.Query<NoteSummary>(query, deleted, limit, offset)
+                .ToList();
 
             return notes;
         }
 
-        private Model.Projections.NoteSummary[] SearchNotesTaggged(SQLiteConnection con, string[] tags, bool searchInDeleted)
+        private string[] SearchNoteTagsSubstring(SQLiteConnection con, string searchTerm, bool deleted)
         {
             Contract.RequiresNonNull(con, nameof(con));
-            Contract.RequiresNonNull(con, nameof(tags));
-            Contract.Requires<ArgumentException>(tags.Length > 0, $"{nameof(tags)} must not be empty");
+            Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(searchTerm), $"{nameof(searchTerm)} must not be empty");
 
-            // build where clause
-            var whereClause = string.Join("AND ", tags.Select(x => 
+            var query = FtsSearchQuery;
+
+            return GetTags(con, $"WHERE id IN (SELECT id FROM ({query}))", deleted, searchTerm);
+        }
+
+        private static readonly Func<string[], string> BuildTagSearchWhereClause = (tagsToQuery) =>
+            "WHERE notes.isdeleted = ? AND " +
+                string.Join("AND ", tagsToQuery.Select(x =>
                 $"(tags = '{x}' OR tags LIKE '{x}{Note.TagSeperator}%' " +
                 $"OR tags LIKE '%{Note.TagSeperator}{x}{Note.TagSeperator}%' " +
                 $"OR tags LIKE '%{Note.TagSeperator}{x}')"));
 
-            var query = $"SELECT * FROM notes WHERE notes.isdeleted = ? AND {whereClause};";
+        private List<NoteSummary> SearchNotesTagged(SQLiteConnection con, 
+            int offset, int limit, string[] tagsToQuery, bool deleted)
+        {
+            Contract.RequiresNonNull(con, nameof(con));
+            Contract.RequiresNonNull(con, nameof(tagsToQuery));
+            Contract.Requires<ArgumentException>(tagsToQuery.Length > 0, $"{nameof(tagsToQuery)} must not be empty");
 
-            var notes = con.Query<NoteSummary>(query, searchInDeleted)
-                .ToList()
-                .Select(mapper.Map<Model.Projections.NoteSummary>)
-                .ToArray();
+            // build where clause
+            var whereClause = BuildTagSearchWhereClause(tagsToQuery);
+
+            var query = $"SELECT * FROM notes {whereClause} " +
+                        $"ORDER BY conflictingnoteid DESC, timestamp DESC " +
+                        $"LIMIT ? OFFSET ?";
+
+            var notes = con.Query<NoteSummary>(query, deleted, limit, offset)
+                .ToList();
 
             return notes;
         }
 
+        private string[] SearchNoteTagsTagged(SQLiteConnection con, string[] tagsToQuery, bool deleted)
+        {
+            Contract.RequiresNonNull(con, nameof(con));
+
+            return GetTags(con, BuildTagSearchWhereClause(tagsToQuery), deleted);
+        }
+
         #region Note API
 
-        public Task<Model.Projections.NoteSummary[]> GetNotesAsync(bool deleted = false)
+        public async Task<Model.Projections.NoteSummary[]> GetNotesAsync(int offset, int limit, bool deleted = false)
         {
-            return RunWithConnection(con =>
+            var entities = await RunWithConnection(con =>
             {
-                var query = con.Table<NoteSummary>();
-
-                var notes = query
-                    .Where(x => x.IsDeleted == deleted)
-                    .ToList()
-                    .Select(mapper.Map<Model.Projections.NoteSummary>)
-                    .OrderByDescending(x => x.ConflictingNoteId.HasValue)
+                return con.Table<NoteSummary>()
+                    .Where(x=> x.IsDeleted == deleted)
+                    .OrderByDescending(x => x.ConflictingNoteId)
                     .ThenByDescending(x => x.Timestamp)
+                    .Skip(offset)
+                    .Take(limit)
+                    .ToList();
+            });
+
+            return await Task.Run(() =>
+            {
+                var notes = entities
+                    .Select(mapper.Map<Model.Projections.NoteSummary>)
                     .ToArray();
 
                 return notes;
             });
         }
 
-        public Task<Model.Projections.NoteSummary[]> SearchNotesAsync(string searchTerm, bool searchInDeleted)
+        public async Task<Model.Projections.NoteSummary[]> SearchNotesAsync(int offset, int limit, 
+            string searchTerm, bool deleted)
         {
             Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(searchTerm), $"{nameof(searchTerm)} must not be empty");
 
-            return RunWithConnection(con =>
+            var result = await RunWithConnection(con =>
             {
-                var result = new List<Model.Projections.NoteSummary>();
-                Model.Projections.NoteSummary[] tmp = null;
-                var shouldReorder = false;
+                List<NoteSummary> tmp = null;
+                var notes = new List<NoteSummary>();
                 long[] noteIds = null;
+                var sourcesCount = 0;
 
                 // check for tag queries
-                var tags = new List<string>();
+                var tagsToQuery = new List<string>();
 
                 searchTerm = regexTag.Replace(searchTerm, m =>
                 {
-                    tags.Add(m.Groups[1].Value);
+                    tagsToQuery.Add(m.Groups[1].Value);
                     return "";
                 }).Trim();
 
-                if (tags.Count > 0)
+                if (tagsToQuery.Count > 0)
                 {
-                    tmp = SearchNotesTaggged(con, tags.ToArray(), searchInDeleted);
+                    tmp = SearchNotesTagged(con, offset, limit, tagsToQuery.ToArray(), deleted);
                     noteIds = tmp.Select(x => x.Id).ToArray();
 
-                    result.AddRange(tmp);
-                    shouldReorder = true;
+                    notes.AddRange(tmp);
+                    sourcesCount++;
                 }
 
                 // if there's still something to search add FTS/Substring results
@@ -485,22 +588,20 @@ namespace Ciphernote.Data
                     {
                         case SearchModeSetting.FtsSearch:
                             if (searchTerm[0] != SearchModeSwitchCharacter)
-                                tmp = SearchNotesFts(con, searchTerm, searchInDeleted);
+                                tmp = SearchNotesFts(con, offset, limit, searchTerm, deleted);
                             else
-                            {
-                                tmp = SearchNotesSubstring(con, searchTerm.Substring(1), searchInDeleted);
-                                shouldReorder = true;
-                            }
+                                tmp = SearchNotesSubstring(con, offset, limit, searchTerm.Substring(1), deleted);
+
+                            sourcesCount++;
                             break;
 
                         case SearchModeSetting.SubstringSearch:
                             if (searchTerm[0] != SearchModeSwitchCharacter)
-                            {
-                                tmp = SearchNotesSubstring(con, searchTerm, searchInDeleted);
-                                shouldReorder = true;
-                            }
+                                tmp = SearchNotesSubstring(con, offset, limit, searchTerm, deleted);
                             else
-                                tmp = SearchNotesFts(con, searchTerm.Substring(1), searchInDeleted);
+                                tmp = SearchNotesFts(con, offset, limit, searchTerm.Substring(1), deleted);
+
+                            sourcesCount++;
                             break;
                     }
 
@@ -515,22 +616,38 @@ namespace Ciphernote.Data
                     else
                         noteIds = tmp.Select(x => x.Id).ToArray();
 
-                    result.AddRange(tmp);
+                    notes.AddRange(tmp);
                 }
+
+                return Tuple.Create(notes, noteIds, sourcesCount);
+            });
+
+            return await Task.Run(() =>
+            {
+                // extract result items
+                var entities = result.Item1;
+                var _noteIds = result.Item2;
+                var _sourcesCount = result.Item3;
 
                 // make distinct
-                if (noteIds.Length != result.Count)
-                    result = noteIds.Select(x => result.First(y => y.Id == x)).ToList();
+                if (_noteIds.Length != entities.Count)
+                    entities = _noteIds.Select(x => entities.First(y => y.Id == x)).ToList();
+
+                // Map 
+                var notes = entities
+                    .Select(mapper.Map<Model.Projections.NoteSummary>)
+                    .ToArray();
 
                 // sort
-                if (shouldReorder)
+                if (_sourcesCount > 1)
                 {
-                    result = result
-                        .OrderByDescending(x => x.Timestamp)
-                        .ToList();
+                    notes = notes
+                        .OrderByDescending(x => x.ConflictingNoteId.HasValue)
+                        .ThenByDescending(x => x.Timestamp)
+                        .ToArray();
                 }
 
-                return result.ToArray();
+                return notes;
             });
         }
 
@@ -808,6 +925,70 @@ namespace Ciphernote.Data
         }
 
         #endregion  // Note API
+
+        #region Tag API
+
+        public Task<string[]> GetTagsAsync(bool deleted = false)
+        {
+            return RunWithConnection(con =>
+            {
+                return GetTags(con, "WHERE isdeleted = ?", deleted);
+            });
+        }
+
+        public Task<string[]> SearchTagsAsync(string searchTerm, bool deleted)
+        {
+            return RunWithConnection(con =>
+            {
+                string[] tmp = null;
+                var tags = new HashSet<string>();
+
+                // check for tag queries
+                var tagsToQuery = new List<string>();
+
+                searchTerm = regexTag.Replace(searchTerm, m =>
+                {
+                    tagsToQuery.Add(m.Groups[1].Value);
+                    return "";
+                }).Trim();
+
+                if (tagsToQuery.Count > 0)
+                {
+                    tmp = SearchNoteTagsTagged(con, tagsToQuery.ToArray(), deleted);
+
+                    foreach (var tag in tmp)
+                        tags.Add(tag);
+                }
+
+                // if there's still something to search add FTS/Substring results
+                if (!string.IsNullOrEmpty(searchTerm))
+                {
+                    switch (appSettings.DefaultSearchMode)
+                    {
+                        case SearchModeSetting.FtsSearch:
+                            if (searchTerm[0] != SearchModeSwitchCharacter)
+                                tmp = SearchNoteTagsFts(con, searchTerm, deleted);
+                            else
+                                tmp = SearchNoteTagsSubstring(con, searchTerm.Substring(1), deleted);
+                            break;
+
+                        case SearchModeSetting.SubstringSearch:
+                            if (searchTerm[0] != SearchModeSwitchCharacter)
+                                tmp = SearchNoteTagsSubstring(con, searchTerm, deleted);
+                            else
+                                tmp = SearchNoteTagsFts(con, searchTerm.Substring(1), deleted);
+                            break;
+                    }
+
+                    foreach (var tag in tmp)
+                        tags.Add(tag);
+                }
+
+                return tags.ToArray();
+            });
+        }
+
+        #endregion // Tag API
 
         #region Delete Queue API
 

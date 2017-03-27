@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -200,10 +201,11 @@ namespace Ciphernote.ViewModels
                     cryptoService.GenerateAndSetMasterKey();
 
                     // and export it 
-                    var encryptedContentKey = await cryptoService.ExportEncryptedMasterKey();
+                    var encryptedMasterKey = await cryptoService.ExportEncryptedMasterKey();
 
                     // register with backend
-                    var response = await accountService.Register(cryptoService.AccessToken, encryptedContentKey);
+                    var response = await accountService.Register(cryptoService.AccessToken, encryptedMasterKey,
+                        CultureInfo.CurrentUICulture.TwoLetterISOLanguageName);
 
                     if (response.Success)
                         isRegistered = true;
